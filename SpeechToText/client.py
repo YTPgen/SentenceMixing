@@ -144,7 +144,6 @@ def main():
     '''
     # load video and extract audio from it
 
-    import subprocess
 
     outp_filename = 'hotelmario'
     command = f'youtube-dl --write-srt --srt-lang en jra4ZxGA-ww --o {outp_filename}'
