@@ -1,78 +1,12 @@
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
 import re
 
-import argparse
-from moviepy.editor import *
+from fire import Fire
+from moviepy.editor import concatenate, VideoFileClip
 import numpy as np
 import shlex
 import subprocess
 import sys
 import wave
-import json
-
-from deepspeech import Model, printVersions
-from timeit import default_timer as timer
-
-try:
-    from shhlex import quote
-except ImportError:
-    from pipes import quote
-
-def convert_samplerate(audio_path, desired_sample_rate):
-    sox_cmd = 'sox {} --type raw --bits 16 --channels 1 --rate {} --encoding signed-integer --endian little --compression 0.0 --no-dither - '.format(quote(audio_path), desired_sample_rate)
-    try:
-        output = subprocess.check_output(shlex.split(sox_cmd), stderr=subprocess.PIPE)
-    except subprocess.CalledProcessError as e:
-        raise RuntimeError('SoX returned non-zero status: {}'.format(e.stderr))
-    except OSError as e:
-        raise OSError(e.errno, 'SoX not found, use {}hz files or install it: {}'.format(desired_sample_rate, e.strerror))
-
-    return desired_sample_rate, np.frombuffer(output, np.int16)
-
-
-def metadata_to_string(metadata):
-    return ''.join(item.character for item in metadata.items)
-
-def words_from_metadata(metadata):
-    word = ""
-    word_list = []
-    word_start_time = 0
-    # Loop through each character
-    for i in range(0, metadata.num_items):
-        item = metadata.items[i]
-        # Append character to word if it's not a space
-        if item.character != " ":
-            word = word + item.character
-        # Word boundary is either a space or the last character in the array
-        if item.character == " " or i == metadata.num_items - 1:
-            word_duration = item.start_time - word_start_time
-
-            if word_duration < 0:
-                word_duration = 0
-
-            each_word = dict()
-            each_word["word"] = word
-            each_word["start_time "] = round(word_start_time, 4)
-            each_word["duration"] = round(word_duration, 4)
-
-            word_list.append(each_word)
-            # Reset
-            word = ""
-            word_start_time = 0
-        else:
-            if len(word) == 1:
-                # Log the start time of the new word
-                word_start_time = item.start_time
-
-    return word_list
-
-
-def metadata_json_output(metadata):
-    json_result = dict()
-    json_result["words"] = words_from_metadata(metadata)
-    json_result["confidence"] = metadata.confidence
-    return json_result#json.dumps(json_result)
 
 
 def format_text(text):
@@ -85,73 +19,39 @@ def format_text(text):
     return formatted_text
 
 
-
 def convert_time(timestring):
     nums = map(float, re.findall(r'\d+', timestring))
     nums = list(nums)
-    return 3600*nums[0] + 60*nums[1] + nums[2]/1000
+    return 3600*nums[0] + 60*nums[1] + nums[2] + nums[3]/1000
 
 
-class VersionAction(argparse.Action):
-    def __init__(self, *args, **kwargs):
-        super(VersionAction, self).__init__(nargs=0, *args, **kwargs)
+def assemble_cuts(video, cuts, outputfile):
+    final = concatenate([video.subclip(start, end)
+                                for (start, end) in cuts]) 
+    final.to_videofile(outputfile)
 
-    def __call__(self, *args, **kwargs):
-        printVersions()
-        exit(0)
+
+def find_word(times_text, word, padding=0.05):
+    matches = [re.search(word, text)
+                    for (t, text) in times_text]
+    return [(t1 + m.start()*(t2-t1)/len(text) - padding,
+            t1 + m.end()*(t2-t1)/len(text) + padding)
+            for m, ((t1, t2), text) in zip(matches, times_text)
+            if (m is not None)]
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Running DeepSpeech inference.')
-    parser.add_argument('--model', 
-                        help='Path to the model (protocol buffer binary file)')
-    parser.add_argument('--lm', nargs='?',
-                        help='Path to the language model binary file')
-    parser.add_argument('--trie', nargs='?',
-                        help='Path to the language model trie file created with native_client/generate_trie')
-    parser.add_argument('--audio', 
-                        help='Path to the audio file to run (WAV format)')
-    parser.add_argument('--beam_width', type=int, default=500,
-                        help='Beam width for the CTC decoder')
-    parser.add_argument('--lm_alpha', type=float, default=0.75,
-                        help='Language model weight (lm_alpha)')
-    parser.add_argument('--lm_beta', type=float, default=1.85,
-                        help='Word insertion bonus (lm_beta)')
-    parser.add_argument('--version', action=VersionAction,
-                        help='Print version and exits')
-    parser.add_argument('--extended', required=False, action='store_true',
-                        help='Output string from extended metadata')
-    parser.add_argument('--json', required=False, action='store_true',
-                        help='Output json from metadata with timestamp of each word')
-    args = parser.parse_args()
-
-    '''
-    print('Loading model from file {}'.format(args.model), file=sys.stderr)
-    model_load_start = timer()
-    ds = Model(args.model, args.beam_width)
-    model_load_end = timer() - model_load_start
-    print('Loaded model in {:.3}s.'.format(model_load_end), file=sys.stderr)
-
-    desired_sample_rate = ds.sampleRate()
-
-    if args.lm and args.trie:
-        print('Loading language model from files {} {}'.format(args.lm, args.trie), file=sys.stderr)
-        lm_load_start = timer()
-        ds.enableDecoderWithLM(args.lm, args.trie, args.lm_alpha, args.lm_beta)
-        lm_load_end = timer() - lm_load_start
-        print('Loaded language model in {:.3}s.'.format(lm_load_end), file=sys.stderr)
-
-    '''
     # load video and extract audio from it
-
-
     outp_filename = 'hotelmario'
+    mixed_filename = 'pesky'
     command = f'youtube-dl --write-srt --srt-lang en jra4ZxGA-ww --o {outp_filename}'
+    # Different format for autogenerated subs! vtt format, needs to be handled separately
+    #command = f'youtube-dl --write-auto-sub --sub-format srt 6c0vDTMKlP0 --o {outp_filename}'
     subprocess.call(command, shell=True)
+    # redirected output to an object rather than writing to file
 
     with open(outp_filename+'.en.vtt') as f:
         lines = f.readlines()
-        print(lines)
     
     times_texts = []
     current_times, current_text = None, ""
@@ -164,43 +64,14 @@ def main():
             current_times, current_text = None, ''
         elif current_times is not None:
             current_text = current_text + line.replace('\n',' ')
-    print(times_texts)
-    '''
 
-    vid_path = '../videos/hotelmario.mp4'
-    command = f"ffmpeg -i {vid_path} -ab 160k -ac 2 -ar {desired_sample_rate} -vn vid_audio.wav"
+    times_texts = times_texts[1:]
+    words = ['The princess', 'made', 'lots of spaghetti', 'for', 'the','Koopalings']
+    cuts = [find_word(times_texts, word)[-1] for word in words]
 
-    subprocess.call(command, shell=True)
-
-    #fin = wave.open(args.audio, 'rb')
-    fin = wave.open('vid_audio.wav', 'rb')
-    #
-    fs = fin.getframerate()
-    if fs != desired_sample_rate:
-        print('Warning: original sample rate ({}) is different than {}hz. Resampling might produce erratic speech recognition.'.format(fs, desired_sample_rate), file=sys.stderr)
-        fs, audio = convert_samplerate('vid_audio.wav', desired_sample_rate)
-    else:
-        audio = np.frombuffer(fin.readframes(fin.getnframes()), np.int16)
-
-    audio_length = fin.getnframes() * (1/fs)
-    fin.close()
-    
-    print(f'tidia {audio.shape}')
-    print('Running inference.', file=sys.stderr)
-     
-    caption_json = metadata_json_output(ds.sttWithMetadata(audio))
-    captions = caption_json['words']
-    # Start time + duration can be used to slice out each word from the video
-    print(f'Printing captions {captions}')
-    times_and_text = format_text(captions)
-    for wird in times_and_text:
-        print(wird[1])
-    video = VideoFileClip(vid_path)
-    #audio = AudioFileClip('../videos/hotelmario.mp4')
-    print(video)
-    '''
-
-    
+    video = VideoFileClip(outp_filename+'.mkv')
+    assemble_cuts(video, cuts, f'{mixed_filename}.mp4')
+        
 
 if __name__ == '__main__':
     main()
