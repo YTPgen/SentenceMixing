@@ -1,3 +1,4 @@
+import random
 import re
 
 from fire import Fire
@@ -7,16 +8,6 @@ import shlex
 import subprocess
 import sys
 import wave
-
-
-def format_text(text):
-    # output format [([start_time, end_time], 'word'),..]
-    formatted_text = []
-    for word in text:
-        formatted_text.append(
-            ([word['start_time '], word['start_time '] + word['duration']], word['word'])
-        )
-    return formatted_text
 
 
 def convert_time(timestring):
@@ -39,6 +30,12 @@ def find_word(times_text, word, padding=0.05):
             for m, ((t1, t2), text) in zip(matches, times_text)
             if (m is not None)]
 
+
+def clean_up_string(text):
+    unwanted_trash = ['.', '!', '\'', '\"', ',', '?']
+    for trash in unwanted_trash:
+        text = text.replace(trash, '')
+    return text
 
 def main():
     # load video and extract audio from it
@@ -64,10 +61,12 @@ def main():
             current_times, current_text = None, ''
         elif current_times is not None:
             current_text = current_text + line.replace('\n',' ')
+            current_text = re.findall('[^:]*[^.]', current_text)[1:]
+            current_text = [clean_up_string(x.strip(' ')) for x in current_text if x][0]
 
     times_texts = times_texts[1:]
-    words = ['The princess', 'made', 'lots of spaghetti', 'for', 'the','Koopalings']
-    cuts = [find_word(times_texts, word)[-1] for word in words]
+    words = ['The princess', 'made', 'lots of', 'pesky', 'spaghetti']
+    cuts = [random.choice(find_word(times_texts, word)) for word in words]
 
     video = VideoFileClip(outp_filename+'.mkv')
     assemble_cuts(video, cuts, f'{mixed_filename}.mp4')
