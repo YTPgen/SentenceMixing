@@ -32,7 +32,7 @@ def find_word(times_text, word, padding=0.05):
 
 
 def clean_up_string(text):
-    unwanted_trash = ['.', '!', '\'', '\"', ',', '?']
+    unwanted_trash = ['.', '!', '\'', '\"', ',', '?', '<', '>']
     for trash in unwanted_trash:
         text = text.replace(trash, '')
     return text
